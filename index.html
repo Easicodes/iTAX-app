@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iTAX — Intelligent Tax Filing Assistant</title>
+<style>
+:root{--navy:#1b2a4a;--blue:#2f5aa8;--light:#eaf0fb;--bg:#f4f6fb;--card:#fff;--muted:#6b7280;--green:#1f9d55;--red:#b91c1c;--border:#dbe3f0;}
+*{box-sizing:border-box;}
+body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--navy);}
+header{background:var(--navy);color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;}
+header h1{font-size:18px;margin:0;}
+nav{display:flex;gap:6px;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--border);}
+nav button{background:none;border:none;color:var(--muted);font-weight:600;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:14px;}
+nav button.active{background:var(--blue);color:#fff;}
+main{max-width:900px;margin:0 auto;padding:18px;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
+.kpi{border-radius:10px;padding:12px;background:var(--light);}
+.kpi .label{font-size:12px;color:var(--muted);} .kpi .value{font-size:18px;font-weight:700;margin-top:4px;}
+.ok{color:var(--green);} .bad{color:var(--red);}
+h2{font-size:15px;margin:0 0 10px;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th,td{text-align:left;padding:6px 4px;border-bottom:1px solid var(--border);}
+.form-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+input,select{padding:8px;border-radius:8px;border:1px solid var(--border);font-size:13px;}
+button.primary{background:var(--blue);color:#fff;border:none;padding:9px 16px;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px;}
+.banner{border-radius:10px;padding:12px;background:var(--light);font-size:13px;line-height:1.5;}
+.chatwrap{display:flex;flex-direction:column;height:55vh;}
+.msgs{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;}
+.bubble{max-width:80%;padding:10px 12px;border-radius:12px;font-size:13px;}
+.bubble.bot{background:var(--light);align-self:flex-start;}
+.bubble.user{background:var(--blue);color:#fff;align-self:flex-end;}
+.chatinput{display:flex;gap:8px;margin-top:10px;}
+.chatinput input{flex:1;}
+.small{font-size:12px;color:var(--muted);}
+.authbox{max-width:360px;margin:60px auto;}
+.error{color:var(--red);font-size:13px;margin-top:6px;}
+</style>
+</head>
+<body>
+<header><h1>iTAX — Intelligent Tax Filing Assistant</h1><span class="small" id="who" style="color:#cdd8f2;"></span></header>
+<nav id="nav" style="display:none;"></nav>
+<main id="main"></main>
+
+<script src="config.js"></script>
+<script>
+const API = window.API_BASE_URL;
+let token = localStorage.getItem("itax_token");
+let user = JSON.parse(localStorage.getItem("itax_user") || "null");
+let tab = "dashboard";
+let txCache = [];
+let chatHistory = [{role:"bot", text:"Hello! I'm Tax Buddy. Ask me anything about NTA 2025 SME compliance."}];
+let chatBusy = false;
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}), ...(opts.headers||{}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
+
+function naira(n){ return "\u20a6" + Number(n).toLocaleString(); }
+
+function renderAuth(mode){
+  const main = document.getElementById("main");
+  main.innerHTML = `
+  <div class="authbox card">
+    <h2>${mode==="login"?"Log in":"Create your account"}</h2>
+    ${mode==="register"?`<div class="form-row"><input id="a-biz" placeholder="Business name" style="width:100%;"></div>`:""}
+    <div class="form-row"><input id="a-email" placeholder="Email" style="width:100%;"></div>
+    <div class="form-row"><input id="a-pass" type="password" placeholder="Password" style="width:100%;"></div>
+    <button class="primary" onclick="doAuth('${mode}')">${mode==="login"?"Log in":"Register"}</button>
+    <div id="a-err" class="error"></div>
+    <div class="small" style="margin-top:10px;">
+      ${mode==="login"?`No account? <a href="#" onclick="renderAuth('register');return false;">Register</a>`
+                      :`Already have one? <a href="#" onclick="renderAuth('login');return false;">Log in</a>`}
+    </div>
+  </div>`;
+}
+
+async function doAuth(mode){
+  const email = document.getElementById("a-email").value.trim();
+  const password = document.getElementById("a-pass").value;
+  const businessName = mode==="register" ? document.getElementById("a-biz").value.trim() : undefined;
+  try {
+    const data = await api("/api/auth/" + mode, { method:"POST", body: JSON.stringify({ email, password, businessName }) });
+    token = data.token; user = data.user;
+    localStorage.setItem("itax_token", token);
+    localStorage.setItem("itax_user", JSON.stringify(user));
+    await boot();
+  } catch(e) {
+    document.getElementById("a-err").textContent = e.message;
+  }
+}
+
+function logout(){
+  token = null; user = null;
+  localStorage.removeItem("itax_token"); localStorage.removeItem("itax_user");
+  document.getElementById("nav").style.display = "none";
+  document.getElementById("who").textContent = "";
+  renderAuth("login");
+}
+
+function renderNav(){
+  document.getElementById("nav").style.display = "flex";
+  document.getElementById("who").textContent = user.businessName + " · ";
+  const tabs = [["dashboard","Dashboard"],["ledger","Ledger"],["chat","Tax Buddy"]];
+  document.getElementById("nav").innerHTML = tabs.map(([k,l])=>`<button class="${tab===k?'active':''}" onclick="setTab('${k}')">${l}</button>`).join("")
+    + `<button style="margin-left:auto;" onclick="logout()">Log out</button>`;
+}
+
+function setTab(t){ tab = t; renderMain(); }
+
+async function loadSummaryAndTx(){
+  const [summary, items] = await Promise.all([api("/api/transactions/summary"), api("/api/transactions")]);
+  txCache = items;
+  return summary;
+}
+
+async function renderMain(){
+  renderNav();
+  const main = document.getElementById("main");
+  if (tab === "dashboard") {
+    const s = await loadSummaryAndTx();
+    const recent = txCache.slice(0,5);
+    main.innerHTML = `
+    <div class="card"><h2>Overview</h2><div class="kpis">
+      <div class="kpi"><div class="label">Total Income</div><div class="value">${naira(s.income)}</div></div>
+      <div class="kpi"><div class="label">Total Expenses</div><div class="value">${naira(s.expenses)}</div></div>
+      <div class="kpi"><div class="label">Net Profit</div><div class="value">${naira(s.netProfit)}</div></div>
+      <div class="kpi"><div class="label">Estimated CIT</div><div class="value ${s.isExempt?'ok':''}">${s.isExempt? naira(0)+" (Exempt)" : naira(s.cit)}</div></div>
+    </div></div>
+    <div class="card"><h2>CIT Filing Status</h2><div class="banner">
+      ${s.isExempt ? `<b class="ok">&#10003; Small Company Exemption applies.</b> Turnover (${naira(s.turnover)}) and fixed assets (${naira(s.fixedAssets)}) are below the NTA 2025 s.56 thresholds, so Estimated CIT is \u20a60.`
+                   : `<b class="bad">Standard CIT rate applies.</b> 30% of net profit, since turnover or fixed assets exceed the exemption thresholds.`}
+      <br><br><button class="primary" onclick="fileDraft()">Generate Draft Return</button>
+      <span id="file-msg" class="small"></span>
+    </div></div>
+    <div class="card"><h2>Filing History</h2><table id="filings-table"><tr><th>Year</th><th>Gross Profit</th><th>CIT</th><th>Status</th><th></th></tr></table></div>
+    <div class="card"><h2>Recent Transactions</h2><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr>
+      ${recent.map(t=>`<tr><td>${t.date}</td><td>${t.description}</td><td class="${t.type==='income'?'ok':'bad'}">${t.type==='income'?'+':'-'}${naira(t.amount)}</td></tr>`).join("")}
+    </table></div>`;
+    await loadFilings();
+  } else if (tab === "ledger") {
+    if (!txCache.length) await loadSummaryAndTx();
+    main.innerHTML = `
+    <div class="card"><h2>Add Transaction</h2>
+      <div class="form-row">
+        <input type="date" id="f-date" value="${new Date().toISOString().slice(0,10)}">
+        <select id="f-type"><option value="income">Income</option><option value="expense">Expense</option></select>
+        <input type="text" id="f-desc" placeholder="Description" style="flex:1;min-width:160px;">
+        <input type="number" id="f-amount" placeholder="Amount (\u20a6)" min="0">
+        <button class="primary" onclick="addTx()">Add</button>
+      </div>
+      <div id="t-err" class="error"></div>
+    </div>
+    <div class="card"><h2>All Transactions</h2><table><tr><th>Date</th><th>Description</th><th>Type</th><th>Amount</th><th></th></tr>
+      ${txCache.map(t=>`<tr><td>${t.date}</td><td>${t.description}</td><td>${t.type}</td><td class="${t.type==='income'?'ok':'bad'}">${naira(t.amount)}</td><td><a href="#" onclick="delTx('${t._id}');return false;">remove</a></td></tr>`).join("")}
+    </table></div>`;
+  } else {
+    main.innerHTML = `
+    <div class="card chatwrap"><h2>Tax Buddy — AI Assistant</h2>
+      <div class="msgs" id="msgs">
+        ${chatHistory.map(m=>`<div class="bubble ${m.role==='user'?'user':'bot'}">${m.text}${m.sources&&m.sources.length?`<div class="small" style="margin-top:4px;font-style:italic;">Source: ${m.sources.join('; ')}</div>`:''}</div>`).join("")}
+        ${chatBusy?`<div class="bubble bot">Thinking…</div>`:""}
+      </div>
+      <div class="chatinput">
+        <input id="chat-in" placeholder="Type your tax question..." onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="primary" onclick="sendChat()" ${chatBusy?"disabled":""}>Send</button>
+      </div>
+    </div>`;
+    const m = document.getElementById("msgs"); if (m) m.scrollTop = m.scrollHeight;
+  }
+}
+
+async function fileDraft(){
+  try {
+    await api("/api/tax/file", { method:"POST", body: JSON.stringify({ periodYear: new Date().getFullYear() }) });
+    document.getElementById("file-msg").textContent = " Draft return generated.";
+    await loadFilings();
+  } catch(e) {
+    document.getElementById("file-msg").textContent = " " + e.message;
+  }
+}
+async function loadFilings(){
+  const filings = await api("/api/tax/filings");
+  const table = document.getElementById("filings-table");
+  if (!table) return;
+  table.innerHTML = `<tr><th>Year</th><th>Gross Profit</th><th>CIT</th><th>Status</th><th></th></tr>` +
+    filings.map(f => `<tr><td>${f.periodYear}</td><td>${naira(f.grossProfit)}</td><td>${f.isExempt? 'Exempt':naira(f.citLiability)}</td><td>${f.status}</td>
+      <td>${f.status==='draft' ? `<a href="#" onclick="submitFiling('${f._id}');return false;">confirm submission</a>` : ''}</td></tr>`).join("");
+}
+async function submitFiling(id){
+  await api(`/api/tax/${id}/submit`, { method:"POST" });
+  await loadFilings();
+}
+
+async function addTx(){
+  const date = document.getElementById("f-date").value;
+  const type = document.getElementById("f-type").value;
+  const description = document.getElementById("f-desc").value.trim();
+  const amount = Number(document.getElementById("f-amount").value);
+  try {
+    await api("/api/transactions", { method:"POST", body: JSON.stringify({ date, type, description, amount }) });
+    await loadSummaryAndTx();
+    renderMain();
+  } catch(e) {
+    document.getElementById("t-err").textContent = e.message;
+  }
+}
+async function delTx(id){
+  await api("/api/transactions/" + id, { method:"DELETE" });
+  await loadSummaryAndTx();
+  renderMain();
+}
+
+async function sendChat(){
+  const inp = document.getElementById("chat-in");
+  const text = inp.value.trim();
+  if (!text || chatBusy) return;
+  chatHistory.push({role:"user", text});
+  inp.value = ""; chatBusy = true; renderMain();
+  try {
+    const data = await api("/api/chat", { method:"POST", body: JSON.stringify({ message: text }) });
+    chatHistory.push({role:"bot", text: data.answer, sources: data.sources});
+  } catch(e) {
+    chatHistory.push({role:"bot", text: "Something went wrong reaching the assistant: " + e.message});
+  }
+  chatBusy = false; renderMain();
+}
+
+async function boot(){
+  if (!token) { renderAuth("login"); return; }
+  try {
+    await renderMain();
+  } catch(e) {
+    logout();
+  }
+}
+boot();
+</script>
+</body>
+</html>
