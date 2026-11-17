@@ -55,16 +55,26 @@ Render and Vercel both deploy straight from GitHub.
    to wake back up on the next request. That's normal for a free demo — just mention it if your
    supervisor opens it after it's been idle.
 
-## Step 4 — Deploy the frontend to Vercel (~5 min)
-1. Open `/frontend/config.js` and change the URL to your real backend:
-   ```js
-   window.API_BASE_URL = "https://itax-backend.onrender.com";
-   ```
-   (use the exact URL you copied in Step 3, no trailing slash)
-2. Push that change to the same GitHub repo.
-3. Go to https://vercel.com, sign up with GitHub, click **Add New → Project**, pick `itax-app`.
-4. Set **Root Directory** to `frontend`. Leave build settings empty (it's static HTML — no build step).
-5. Click **Deploy**. Vercel gives you a live link like `https://itax-app.vercel.app`.
+## Step 4 — Deploy the frontend (React + Tailwind) to Vercel (~5 min)
+The frontend is a Vite + React + Tailwind CSS app (matching Table 4.1 of Chapter 4).
+1. Go to https://vercel.com, sign up with GitHub, click **Add New → Project**, pick your `itax-app` repo.
+2. Set **Root Directory** to `frontend`. Vercel auto-detects Vite — leave the build
+   command (`vite build`) and output directory (`dist`) as the defaults it suggests.
+3. Before deploying, add an **Environment Variable**:
+   - `VITE_API_BASE_URL` → your Render backend URL from Step 3, e.g.
+     `https://itax-backend.onrender.com` (no trailing slash)
+4. Click **Deploy**. Vercel gives you a live link like `https://itax-app.vercel.app`.
+
+If you ever need to change the backend URL later, update that environment variable in
+Vercel's project settings and hit **Redeploy** — no code change needed.
+
+### Running the frontend locally first (optional)
+```bash
+cd frontend
+cp .env.example .env     # then set VITE_API_BASE_URL to http://localhost:5000
+npm install
+npm run dev               # opens at http://localhost:5173
+```
 
 ## Step 5 — Try it end-to-end
 1. Open your Vercel link.
@@ -143,14 +153,20 @@ itax-app/
 │   ├── routes/                 # auth, transactions, tax (filings), chat (Tax Buddy RAG)
 │   ├── middleware/auth.js      # JWT auth guard
 │   └── .env.example
-└── frontend/
-    ├── index.html            # Single-page UI (Dashboard / Ledger / Tax Buddy)
-    └── config.js              # Points the frontend at your backend URL
+└── frontend/                  # Vite + React + Tailwind CSS (Table 4.1)
+    ├── index.html
+    ├── .env.example           # VITE_API_BASE_URL — points the app at your backend
+    └── src/
+        ├── App.jsx            # Tab shell (Dashboard / Ledger / Tax Buddy)
+        ├── api.js              # Fetch client for the backend REST API
+        ├── context/AuthContext.jsx
+        └── components/        # AuthScreen, TopBar, TabNav, Dashboard, Ledger, Chat
 ```
 
-## Known, intentional simplification vs. Chapter 4
-The frontend here is plain HTML/CSS/JavaScript rather than React.js/Tailwind CSS (Table 4.1),
-to keep the build slim and avoid a Node build step. Everything else — the three-tier
-architecture, all 6 MongoDB collections, the RAG chatbot pipeline, and the CIT algorithm —
-matches the chapter as written. If you need the frontend to literally be React for grading
-purposes, say so and it can be rebuilt as a Vite + React app without changing the backend at all.
+## Frontend stack
+React 18, Tailwind CSS, Framer Motion (animations), Recharts (income/expense chart) and
+Lucide (icons) — matching the React.js + Tailwind CSS stack specified in Table 4.1. Visual
+design: a deep forest-green and gold palette distinct from generic dashboard templates, a
+large "hero number" treatment for the CIT position rather than identical KPI cards, and
+a sliding-pill tab navigation. Verified by building the project and screenshotting every
+screen (desktop and mobile) against a mock backend before delivery.
